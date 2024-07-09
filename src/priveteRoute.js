@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, StyleSheet } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { setSourceData } from './redux/userSlice';
 import Player from './components/player';
@@ -12,6 +12,7 @@ function PriveteRoute() {
   const dispatch = useDispatch();
   const data = useSelector((state) => state.user);
   const [message, setMessage] = useState('');
+  const intervalRef = useRef(null);
 
   const checkSerial = async () => {
     try {
@@ -24,16 +25,50 @@ function PriveteRoute() {
     }
   };
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      checkSerial();
-    }, 10000);
+  const sendStatus = (status, socket) => {
+    try {
+      socket.emit("call", "v1.device.status", {
+        token: data.serial, serial: data.serial,
+        state: status
+      }, function (err, res) {
+        if (err) {
+          console.log("error", err);
+        } else {
+          console.log("status-sent", res);
+          //document.getElementById("res").textContent += "Join room success" + "\n";
+        }
+      });
+    } catch (e) {
+      console.log(e);
+    }
+  }
 
-    return () => clearInterval(interval);
-  }, [data.serial]); 
+  useEffect(() => {
+    if (message !== 'Used Serial Number') {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      intervalRef.current = setInterval(() => {
+        checkSerial();
+      }, 10000); // 10000 ms = 10 seconds
+    } else {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    }
+
+    // Cleanup function to clear interval when component unmounts
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [data.serial, message]);
 
   useEffect(() => {
     let socket;
+    let socketStatus;
     if (message !== '' && message === 'Used Serial Number') {
       if (data?.serial !== 'none') {
         socket = io('https://ws-test.maiasignage.com', {
@@ -49,6 +84,11 @@ function PriveteRoute() {
 
         socket.on('connect', () => {
           console.log('Connected with:', socket.id);
+          socketStatus = setInterval(() => {
+            sendStatus("online", socket)
+            clearInterval(socketStatus);
+          }, 60 * 5 * 1000)
+
           socket.emit('ping');
         });
 
@@ -65,8 +105,13 @@ function PriveteRoute() {
         });
 
         socket.onAny((eventName, ...args) => {
-          console.log(eventName, args);
-          dispatch(setSourceData(args));
+         
+        if(eventName==="device"){
+          if (JSON.stringify(args) !== JSON.stringify(data.source)) {
+            dispatch(setSourceData(args));
+          }
+        }  // Check if args are different from current source in Redux
+        
         });
       }
     }
@@ -77,7 +122,7 @@ function PriveteRoute() {
         console.log('Socket disconnected');
       }
     };
-  }, [message, data.serial]);
+  }, [message, data.serial, dispatch, data.source]);
 
   return (
     <View style={styles.container}>

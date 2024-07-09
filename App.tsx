@@ -1,47 +1,46 @@
-
-import React from 'react';
-import type {PropsWithChildren} from 'react';
-import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
-
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
-
-import PrivateRoute from "./src/priveteRoute"
+import React, { useEffect } from 'react';
+import { SafeAreaView, Alert, BackHandler } from 'react-native';
 import { Provider } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
+import ExitApp from 'react-native-exit-app';
+
+import PrivateRoute from "./src/priveteRoute";
 import { store, persistor } from "./src/redux/store";
 
-
 function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+  useEffect(() => {
+    const backAction = () => {
+      Alert.alert("Çıkış", "Uygulamadan çıkmak istiyor musunuz?", [
+        {
+          text: "Hayır",
+          onPress: () => null,
+          style: "cancel"
+        },
+        {
+          text: "Evet", 
+          onPress: () => ExitApp.exitApp()
+        }
+      ]);
+      return true;
+    };
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
-  };
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      backAction
+    );
 
-  return ( <Provider store={store}>
-    <PersistGate loading={null} persistor={persistor}>
-    <SafeAreaView style={{flex:1}}>
-      <PrivateRoute/>
-    </SafeAreaView>
-    </PersistGate>
+    return () => backHandler.remove();
+  }, []);
+
+  return (
+    <Provider store={store}>
+      <PersistGate loading={null} persistor={persistor}>
+        <SafeAreaView style={{flex:1}}>
+          <PrivateRoute/>
+        </SafeAreaView>
+      </PersistGate>
     </Provider>
   );
 }
-
-
 
 export default App;

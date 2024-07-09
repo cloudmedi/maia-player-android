@@ -140,7 +140,7 @@ function DeviceNumber() {
    const handleSubmit = async () => {
     try {
       const meta = await getDeviceMeta();
-     
+     console.log(meta.device_id)
       const response = await axios.post(
         'https://api-test.maiasignage.com/api/v1/device/pre_create',
         {
@@ -164,7 +164,7 @@ function DeviceNumber() {
     const requestAndFetch = async () => {
       const hasPermissions = await requestPermissions();
       if (hasPermissions) {
-        await fetchIpAddress();
+       
         if (data.serial === 'none') {
           await handleSubmit();
         } 
