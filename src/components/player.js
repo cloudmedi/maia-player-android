@@ -28,13 +28,11 @@ function Player() {
   }, [playlistContent]);
 
   const resetPlayer = useCallback(() => {
-    // Tüm zamanlayıcıları temizle
     Object.keys(timerRefs.current).forEach(key => {
       clearTimeout(timerRefs.current[key]);
     });
     timerRefs.current = {};
 
-    // Tüm video oynatıcıları durdur
     Object.keys(videoRefs.current).forEach(key => {
       const videoRef = videoRefs.current[key];
       if (videoRef && videoRef.pause) {
@@ -43,7 +41,6 @@ function Player() {
     });
     videoRefs.current = {};
 
-    // Başlangıç durumunu sıfırla
     const initialVideoStates = {};
     const initialIndices = {};
     for (const key in playlistContent) {
@@ -119,7 +116,11 @@ function Player() {
     console.log(`Going to next slide: ${nextIndex} in playlist ${playlistIndex}`);
 
     if (swiperRefs.current[playlistIndex]) {
-      swiperRefs.current[playlistIndex].scrollTo(nextIndex, true);
+      if (nextIndex === 0) {
+        swiperRefs.current[playlistIndex].scrollTo(nextIndex, false);
+      } else {
+        swiperRefs.current[playlistIndex].scrollTo(nextIndex, true);
+      }
     }
 
     if (timerRefs.current[playlistIndex]) {
@@ -175,7 +176,7 @@ function Player() {
             paused={videoStates[index]?.[idx]?.paused}
             onLoad={() => {
               console.log(`Video ${index}-${idx} loaded`);
-              if (isLoading) setIsLoading(false); // Set loading to false when video is loaded
+              if (isLoading) setIsLoading(false);
             }}
             onError={(error) => console.error(`Video error: ${error.errorString}`)}
             onEnd={() => {
