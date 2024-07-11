@@ -1,10 +1,15 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Image, StyleSheet, ActivityIndicator, PermissionsAndroid, Platform } from 'react-native';
 import Swiper from 'react-native-swiper';
 import { useSelector } from 'react-redux';
 import Video from 'react-native-video';
+import RNFS from 'react-native-fs';
+import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEFAULT_DURATION = 5000;
+const DOWNLOADED_PATHS_KEY = 'downloadedPaths';
+const CONTENT_HASH_KEY = 'contentHash';
 
 function Player() {
   const data = useSelector((state) => state.user);
@@ -12,22 +17,120 @@ function Player() {
   const [currentIndices, setCurrentIndices] = useState({});
   const [videoStates, setVideoStates] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [allContentReady, setAllContentReady] = useState(false);
+  const [downloadedPaths, setDownloadedPaths] = useState({});
   const swiperRefs = useRef({});
   const videoRefs = useRef({});
   const timerRefs = useRef({});
 
+  const generateContentHash = (content) => {
+    return JSON.stringify(content);
+  };
+
   useEffect(() => {
     const content = data?.source[0]?.source?.content || {};
     setPlaylistContent(content);
-    console.log('Playlist Content:', content);
     setIsLoading(true);
+    setAllContentReady(false);
   }, [data]);
 
   useEffect(() => {
-    resetPlayer();
+    if (Object.keys(playlistContent).length > 0) {
+      checkPermissions().then(async (granted) => {
+        if (granted) {
+          const currentContentHash = generateContentHash(playlistContent);
+          const savedContentHash = await AsyncStorage.getItem(CONTENT_HASH_KEY);
+
+          if (currentContentHash !== savedContentHash) {
+            await AsyncStorage.setItem(CONTENT_HASH_KEY, currentContentHash);
+            const savedPaths = await loadDownloadedPaths();
+            setDownloadedPaths(savedPaths);
+            resetPlayer(savedPaths, true);
+          } else {
+            const savedPaths = await loadDownloadedPaths();
+            setDownloadedPaths(savedPaths);
+            resetPlayer(savedPaths, false);
+          }
+        } else {
+          console.error("Storage permission not granted");
+          setIsLoading(false);
+        }
+      });
+    }
   }, [playlistContent]);
 
-  const resetPlayer = useCallback(() => {
+  const checkPermissions = async () => {
+    if (Platform.OS === 'android') {
+      const readGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
+      const writeGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+      if (!readGranted || !writeGranted) {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        ]);
+        return (
+          granted['android.permission.READ_EXTERNAL_STORAGE'] === PermissionsAndroid.RESULTS.GRANTED &&
+          granted['android.permission.WRITE_EXTERNAL_STORAGE'] === PermissionsAndroid.RESULTS.GRANTED
+        );
+      }
+      return true;
+    } else if (Platform.OS === 'ios') {
+      const photoLibraryGranted = await request(PERMISSIONS.IOS.PHOTO_LIBRARY);
+      return photoLibraryGranted === RESULTS.GRANTED;
+    }
+    return false;
+  };
+
+  const loadDownloadedPaths = async () => {
+    try {
+      const savedPaths = await AsyncStorage.getItem(DOWNLOADED_PATHS_KEY);
+      return savedPaths ? JSON.parse(savedPaths) : {};
+    } catch (error) {
+      console.error(`Failed to load downloaded paths: ${error.message}`);
+      return {};
+    }
+  };
+
+  const saveDownloadedPaths = async (paths) => {
+    try {
+      await AsyncStorage.setItem(DOWNLOADED_PATHS_KEY, JSON.stringify(paths));
+    } catch (error) {
+      console.error(`Failed to save downloaded paths: ${error.message}`);
+    }
+  };
+
+  const clearOldFiles = async (paths) => {
+    for (const key in paths) {
+      if (paths.hasOwnProperty(key)) {
+        for (const idx in paths[key]) {
+          if (paths[key].hasOwnProperty(idx)) {
+            try {
+              await RNFS.unlink(paths[key][idx]);
+            } catch (error) {
+              console.error(`Failed to delete file: ${error.message}`);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  const downloadFile = async (url, filename) => {
+    const downloadDest = `${RNFS.DocumentDirectoryPath}/${filename}`;
+    try {
+      const download = await RNFS.downloadFile({
+        fromUrl: url,
+        toFile: downloadDest,
+      }).promise;
+      return download.statusCode === 200 ? downloadDest : null;
+    } catch (error) {
+      console.error(`Failed to download file: ${error.message}`);
+      return null;
+    }
+  };
+
+  const resetPlayer = useCallback(async (existingPaths, isNewContent) => {
+    // Timer ve video referanslarını sıfırla
     Object.keys(timerRefs.current).forEach(key => {
       clearTimeout(timerRefs.current[key]);
     });
@@ -43,37 +146,65 @@ function Player() {
 
     const initialVideoStates = {};
     const initialIndices = {};
+    const downloadPromises = [];
+
+    if (isNewContent) {
+      await clearOldFiles(existingPaths);
+    }
+
     for (const key in playlistContent) {
       if (playlistContent.hasOwnProperty(key)) {
         initialVideoStates[key] = playlistContent[key]?.playlist?.map(() => ({ paused: true }));
         initialIndices[key] = 0;
+
+        playlistContent[key]?.playlist.forEach((item, idx) => {
+          if (!isNewContent && existingPaths[key] && existingPaths[key][idx]) {
+            return; // Dosya zaten indirilmiş, tekrar indirme
+          }
+          if (item.type === 'video') {
+            const videoUrl = `https://vz-d99c6c4e-749.b-cdn.net/${item?.meta?.video_id}/original`;
+            const filename = `${item?.meta?.video_id}`;
+            downloadPromises.push(downloadFile(videoUrl, filename).then(localPath => ({ key, idx, type: 'video', localPath })));
+          } else if (item.type === 'image') {
+            const imageUrl = `https://${item?.domain}/${item?.path}/${item?.file}`;
+            const filename = `${item.name}`;
+            downloadPromises.push(downloadFile(imageUrl, filename).then(localPath => ({ key, idx, type: 'image', localPath })));
+          }
+        });
       }
     }
+
+    const downloadedFiles = await Promise.all(downloadPromises);
+
+    const newDownloadedPaths = isNewContent ? {} : { ...existingPaths };
+    downloadedFiles.forEach(file => {
+      if (!newDownloadedPaths[file.key]) {
+        newDownloadedPaths[file.key] = {};
+      }
+      newDownloadedPaths[file.key][file.idx] = file.localPath;
+    });
+
+    setDownloadedPaths(newDownloadedPaths);
+    saveDownloadedPaths(newDownloadedPaths);
     setVideoStates(initialVideoStates);
     setCurrentIndices(initialIndices);
-
-    if (Object.keys(playlistContent).length > 0) {
-      Object.keys(playlistContent).forEach(index => {
-        const firstBox = playlistContent[index];
-        if (firstBox.playlist && firstBox.playlist[0]?.type === 'video') {
-          setTimeout(() => {
-            setVideoStates(prev => ({
-              ...prev,
-              [index]: [{ paused: false }, ...prev[index].slice(1)]
-            }));
-            setIsLoading(false);
-          }, 100);
-        } else if (firstBox.playlist && firstBox.playlist[0]?.type === 'image') {
-          timerRefs.current[index] = setTimeout(() => {
-            goToNextSlide(index);
-            setIsLoading(false);
-          }, firstBox.playlist[0]?.meta?.duration * 1000 || DEFAULT_DURATION);
-        }
-      });
-    } else {
-      setIsLoading(false);
-    }
+    setAllContentReady(true);
+    setIsLoading(false);
+    console.log('Player reset and content downloaded:', newDownloadedPaths);
   }, [playlistContent]);
+
+  useEffect(() => {
+    if (allContentReady) {
+      for (const key in playlistContent) {
+        if (playlistContent.hasOwnProperty(key) && playlistContent[key].playlist[0].type === 'video') {
+          setVideoStates(prevStates => ({
+            ...prevStates,
+            [key]: prevStates[key].map((state, idx) => idx === 0 ? { ...state, paused: false } : state)
+          }));
+        }
+      }
+    }
+  }, [allContentReady]);
 
   const handleSlideChange = useCallback((index, playlistIndex) => {
     console.log(`Slide changed to index ${index} in playlist ${playlistIndex}`);
@@ -134,19 +265,15 @@ function Player() {
 
   const renderMediaContent = useCallback((res, idx, index) => {
     const isVideo = res?.type === 'video';
-    const imageUrl = !isVideo
-      ? `https://${res?.domain}/${res?.path}/${res?.file}`
-      : `https://vz-d99c6c4e-749.b-cdn.net/${res?.meta?.video_id}/preview.webp`;
-
+    const localPath = downloadedPaths[index]?.[idx];
     const shouldRenderVideo = currentIndices[index] === idx;
     const shouldLoop = playlistContent[index]?.playlist?.length === 1 && isVideo;
-
     return (
       <View key={idx} style={styles.mediaContainer}>
         {res?.type === 'image' && (
           <Image
             style={styles.image}
-            source={{ uri: imageUrl }}
+            source={{ uri: `file://${localPath}` }}
             resizeMode={`${res.meta.objectFit}`}
             onLoad={() => {
               if (idx === currentIndices[index]) {
@@ -168,7 +295,7 @@ function Player() {
               }
               videoRefs.current[`${index}-${idx}`] = ref;
             }}
-            source={{ uri: `https://vz-d99c6c4e-749.b-cdn.net/${res?.meta.video_id}/original` }}
+            source={{ uri: `file://${localPath}` }}
             style={styles.video}
             muted={false}
             resizeMode={`${res.meta.objectFit}`}
@@ -176,7 +303,6 @@ function Player() {
             paused={videoStates[index]?.[idx]?.paused}
             onLoad={() => {
               console.log(`Video ${index}-${idx} loaded`);
-              if (isLoading) setIsLoading(false);
             }}
             onError={(error) => console.error(`Video error: ${error.errorString}`)}
             onEnd={() => {
@@ -189,9 +315,9 @@ function Player() {
         )}
       </View>
     );
-  }, [currentIndices, videoStates, playlistContent, isLoading]);
+  }, [currentIndices, videoStates, playlistContent, downloadedPaths]);
 
-  if (Object.keys(playlistContent).length === 0 || isLoading) {
+  if (Object.keys(playlistContent).length === 0 || !allContentReady) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#1e29f3" />
@@ -257,7 +383,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   container: {
-    width:"100%",
+    width: "100%",
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
