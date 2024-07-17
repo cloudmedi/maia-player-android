@@ -158,6 +158,7 @@ function Player() {
         initialIndices[key] = 0;
 
         playlistContent[key]?.playlist.forEach((item, idx) => {
+          console.log(item)
           if (!isNewContent && existingPaths[key] && existingPaths[key][idx]) {
             return; // Dosya zaten indirilmiş, tekrar indirme
           }
@@ -166,8 +167,10 @@ function Player() {
             const filename = `${item?.meta?.video_id}`;
             downloadPromises.push(downloadFile(videoUrl, filename).then(localPath => ({ key, idx, type: 'video', localPath })));
           } else if (item.type === 'image') {
+           
             const imageUrl = `https://${item?.domain}/${item?.path}/${item?.file}`;
-            const filename = `${item.name}`;
+            const filename = `${item?.file}`;
+
             downloadPromises.push(downloadFile(imageUrl, filename).then(localPath => ({ key, idx, type: 'image', localPath })));
           }
         });
