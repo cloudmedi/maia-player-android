@@ -142,7 +142,7 @@ function DeviceNumber() {
       const meta = await getDeviceMeta();
      console.log(meta.device_id)
       const response = await axios.post(
-        'https://api-test.maiasignage.com/api/v1/device/pre_create',
+        'https://api.maiasignage.com/api/v1/device/pre_create',
         {
           fingerprint: meta.device_id,
           meta: meta,

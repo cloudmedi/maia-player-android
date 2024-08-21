@@ -14,6 +14,7 @@ function PriveteRoute() {
   const data = useSelector((state) => state.user);
   const [message, setMessage] = useState('');
   const intervalRef = useRef(null);
+  const statusIntervalRef = useRef(null); // Yeni bir useRef ekledik
   const [isLoading, setIsLoading] = useState(true);
   const [hasDownloadedContent, setHasDownloadedContent] = useState(false);
 
@@ -50,7 +51,6 @@ function PriveteRoute() {
       const savedPaths = await AsyncStorage.getItem('downloadedPaths');
       if (savedPaths) {
         setHasDownloadedContent(true);
-       
       }
       setIsLoading(false);
     };
@@ -60,10 +60,9 @@ function PriveteRoute() {
 
   useEffect(() => {
     let socket;
-    let socketStatus;
 
     if (hasDownloadedContent || (message !== '' && message === 'Used Serial Number' && data?.serial !== 'none')) {
-      socket = io('https://ws-test.maiasignage.com', {
+      socket = io('https://ws.maiasignage.com', {
         reconnectionDelayMax: 10000,
         transports: ['websocket'],
         auth: {
@@ -76,10 +75,11 @@ function PriveteRoute() {
 
       socket.on('connect', () => {
         console.log('Connected with:', socket.id);
-        socketStatus = setInterval(() => {
+
+        // 5 saniyede bir sendStatus'u çalıştır
+        statusIntervalRef.current = setInterval(() => {
           sendStatus("online", socket);
-          clearInterval(socketStatus);
-        }, 60 * 5 * 1000);
+        }, 5 * 1000);
 
         socket.emit('ping');
       });
@@ -105,9 +105,13 @@ function PriveteRoute() {
       });
 
       return () => {
+        // Temizleme işlemi
         if (socket) {
           socket.disconnect();
           console.log('Socket disconnected');
+        }
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
         }
       };
     }
