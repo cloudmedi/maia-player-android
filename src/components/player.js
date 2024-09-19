@@ -1,18 +1,21 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, Image, StyleSheet, ActivityIndicator, PermissionsAndroid, Platform } from 'react-native';
 import Swiper from 'react-native-swiper';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import Video from 'react-native-video';
 import RNFS from 'react-native-fs';
 import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setSynchronize } from '../redux/userSlice';
 
 const DEFAULT_DURATION = 5000;
 const DOWNLOADED_PATHS_KEY = 'downloadedPaths';
 const CONTENT_HASH_KEY = 'contentHash';
 
 function Player() {
-  const data = useSelector((state) => state.user);
+  const data = useSelector((state) => state.user.source);
+  const synchronize = useSelector((state) => state.user.synchronize);
+  const rotate = useSelector((state) => state.user.rotate);
   const [playlistContent, setPlaylistContent] = useState({});
   const [currentIndices, setCurrentIndices] = useState({});
   const [videoStates, setVideoStates] = useState({});
@@ -22,13 +25,14 @@ function Player() {
   const swiperRefs = useRef({});
   const videoRefs = useRef({});
   const timerRefs = useRef({});
+  const dispatch = useDispatch();
 
   const generateContentHash = (content) => {
     return JSON.stringify(content);
   };
 
   useEffect(() => {
-    const content = data?.source[0]?.source?.content || {};
+    const content = data[0]?.source?.content || {};
     setPlaylistContent(content);
     setIsLoading(true);
     setAllContentReady(false);
@@ -59,6 +63,65 @@ function Player() {
     }
   }, [playlistContent]);
 
+  useEffect(() => {
+    if (Object.keys(synchronize).length > 0) {
+      console.log('Synchronize data changed, resetting playlist');
+      resetPlaylistToStart();
+      dispatch(setSynchronize([]));
+    }
+  }, [synchronize]);
+
+  const getDimensions = useCallback(() => {
+    const rotationDegree = rotate % 360;
+    if (rotationDegree === 90 || rotationDegree === 270) {
+      return { width: 540, height: 960 };
+    } else {
+      return { width: '100%', height: '100%' };
+    }
+  }, [rotate]);
+
+  const resetPlaylistToStart = () => {
+    Object.keys(swiperRefs.current).forEach(key => {
+      if (swiperRefs.current[key]) {
+        swiperRefs.current[key].scrollTo(0, false);
+      }
+    });
+  
+    Object.keys(videoRefs.current).forEach(key => {
+      const videoRef = videoRefs.current[key];
+      if (videoRef) {
+        videoRef.seek(0);
+      }
+    });
+  
+    setVideoStates(prevStates => {
+      const newStates = {};
+      Object.keys(prevStates).forEach(key => {
+        newStates[key] = prevStates[key].map(state => ({ ...state, paused: true }));
+      });
+      return newStates;
+    });
+  
+    setCurrentIndices(prevIndices => {
+      const newIndices = {};
+      Object.keys(prevIndices).forEach(key => {
+        newIndices[key] = 0;
+      });
+      return newIndices;
+    });
+  
+    if (Object.keys(playlistContent).length > 0) {
+      Object.keys(playlistContent).forEach(key => {
+        if (playlistContent[key]?.playlist[0]?.type === 'video') {
+          setVideoStates(prevStates => ({
+            ...prevStates,
+            [key]: prevStates[key].map((state, idx) => idx === 0 ? { ...state, paused: false } : state)
+          }));
+        }
+      });
+    }
+  };
+  
   const checkPermissions = async () => {
     if (Platform.OS === 'android') {
       const readGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
@@ -130,7 +193,6 @@ function Player() {
   };
 
   const resetPlayer = useCallback(async (existingPaths, isNewContent) => {
-    // Timer ve video referanslarını sıfırla
     Object.keys(timerRefs.current).forEach(key => {
       clearTimeout(timerRefs.current[key]);
     });
@@ -158,19 +220,16 @@ function Player() {
         initialIndices[key] = 0;
 
         playlistContent[key]?.playlist.forEach((item, idx) => {
-          console.log(item)
           if (!isNewContent && existingPaths[key] && existingPaths[key][idx]) {
-            return; // Dosya zaten indirilmiş, tekrar indirme
+            return;
           }
           if (item.type === 'video') {
             const videoUrl = `https://vz-d99c6c4e-749.b-cdn.net/${item?.meta?.video_id}/original`;
             const filename = `${item?.meta?.video_id}`;
             downloadPromises.push(downloadFile(videoUrl, filename).then(localPath => ({ key, idx, type: 'video', localPath })));
           } else if (item.type === 'image') {
-           
             const imageUrl = `https://${item?.domain}/${item?.path}/${item?.file}`;
             const filename = `${item?.file}`;
-
             downloadPromises.push(downloadFile(imageUrl, filename).then(localPath => ({ key, idx, type: 'image', localPath })));
           }
         });
@@ -271,13 +330,15 @@ function Player() {
     const localPath = downloadedPaths[index]?.[idx];
     const shouldRenderVideo = currentIndices[index] === idx;
     const shouldLoop = playlistContent[index]?.playlist?.length === 1 && isVideo;
+    const { width, height } = getDimensions();
+    
     return (
       <View key={idx} style={styles.mediaContainer}>
         {res?.type === 'image' && (
           <Image
-            style={styles.image}
+            style={[styles.image, { width, height }]}
             source={{ uri: `file://${localPath}` }}
-            resizeMode={`${res.meta.objectFit}`}
+            resizeMode={res.meta.objectFit}
             onLoad={() => {
               if (idx === currentIndices[index]) {
                 if (timerRefs.current[index]) {
@@ -299,9 +360,9 @@ function Player() {
               videoRefs.current[`${index}-${idx}`] = ref;
             }}
             source={{ uri: `file://${localPath}` }}
-            style={styles.video}
+            style={[styles.video, { width, height }]}
             muted={false}
-            resizeMode={`${res.meta.objectFit}`}
+            resizeMode={res.meta.objectFit}
             repeat={shouldLoop}
             paused={videoStates[index]?.[idx]?.paused}
             onLoad={() => {
@@ -318,7 +379,7 @@ function Player() {
         )}
       </View>
     );
-  }, [currentIndices, videoStates, playlistContent, downloadedPaths]);
+  }, [currentIndices, videoStates, playlistContent, downloadedPaths, getDimensions, goToNextSlide]);
 
   if (Object.keys(playlistContent).length === 0 || !allContentReady) {
     return (
@@ -329,11 +390,13 @@ function Player() {
     );
   }
 
+  const { width, height } = getDimensions();
+
   return (
-    <View style={styles.playerContainer}>
-      <View style={styles.innerContainer}>
-        {data?.source[0]?.source?.layout?.properties?.boxes &&
-          data.source[0].source.layout.properties.boxes.map((resx, index) => {
+    <View style={[styles.playerContainer, { transform: [{ rotate: `${rotate}deg` }], width, height }]}>
+      <View style={[styles.innerContainer, { width, height }]}>
+        {data[0]?.source?.layout?.properties?.boxes &&
+          data[0].source.layout.properties.boxes.map((resx, index) => {
             const playlist = playlistContent[index]?.playlist;
             return (
               <View key={index} style={styles.boxContainer}>
@@ -360,14 +423,12 @@ function Player() {
 
 const styles = StyleSheet.create({
   playerContainer: {
-    width: '100%',
-    height: '100%',
     position: 'relative',
-    backgroundColor: 'black'
+    backgroundColor: 'black',
+    flexDirection: 'column',
   },
   innerContainer: {
-    height: '100%',
-    width: '100%',
+    backgroundColor: "black"
   },
   boxContainer: {
     flex: 1,
@@ -377,13 +438,9 @@ const styles = StyleSheet.create({
   },
   image: {
     flex: 1,
-    width: '100%',
-    height: '100%',
   },
   video: {
     flex: 1,
-    width: '100%',
-    height: '100%',
   },
   container: {
     width: "100%",

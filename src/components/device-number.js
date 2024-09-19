@@ -137,10 +137,11 @@ function DeviceNumber() {
     }
   };
 
-   const handleSubmit = async () => {
+  const handleSubmit = async () => {
     try {
       const meta = await getDeviceMeta();
-     console.log(meta.device_id)
+      console.log('Device Meta:', meta.device_id);
+  
       const response = await axios.post(
         'https://api.maiasignage.com/api/v1/device/pre_create',
         {
@@ -148,18 +149,24 @@ function DeviceNumber() {
           meta: meta,
         }
       );
-
+  
       const { serial } = response.data;
-
+  
       if (serial) {
         console.log('Serial Number:', serial);
         dispatch(setSerial(serial));
       }
     } catch (error) {
-      console.error('An error occurred, please try again later.');
+      if (error.response) {
+        console.error('Server responded with an error:', error.response.data);
+      } else if (error.request) {
+        console.error('No response received:', error.request);
+      } else {
+        console.error('Error during request:', error.message);
+      }
     }
-  }; 
-
+  };
+  
   useEffect(() => {
     const requestAndFetch = async () => {
       const hasPermissions = await requestPermissions();

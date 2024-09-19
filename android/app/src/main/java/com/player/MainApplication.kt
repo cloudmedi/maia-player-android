@@ -1,4 +1,4 @@
-package com.player
+package com.maia.player // Güncellenmiş paket adı
 
 import android.app.Application
 import com.facebook.react.PackageList

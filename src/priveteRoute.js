@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Text, SafeAreaView } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { setSourceData } from './redux/userSlice';
+import { setRotate, setSourceData,setSynchronize } from './redux/userSlice';
 import Player from './components/player';
 import Device from './components/device-number';
 import axios from 'axios';
 import config from './config/config.json';
 import { io } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
+/* import Orientation from 'react-native-orientation-locker'; */
 function PriveteRoute() {
   const dispatch = useDispatch();
   const data = useSelector((state) => state.user);
@@ -19,6 +19,7 @@ function PriveteRoute() {
   const [hasDownloadedContent, setHasDownloadedContent] = useState(false);
 
   const checkSerial = async () => {
+    
     try {
       const response = await axios.post(config.api_base + '/v1/device/check_serial', {
         serial: data.serial,
@@ -45,7 +46,13 @@ function PriveteRoute() {
       console.log(e);
     }
   }
+/*   useEffect(() => {
+    // Başlangıçta landscape moduna kilitler
+  Orientation.lockToPortrait();
 
+    // Cleanup için (örneğin başka bir ekrana geçerken yönü serbest bırakmak isterseniz)
+  
+  }, []); */
   useEffect(() => {
     const checkDownloadedContent = async () => {
       const savedPaths = await AsyncStorage.getItem('downloadedPaths');
@@ -57,7 +64,16 @@ function PriveteRoute() {
 
     checkDownloadedContent();
   }, [dispatch]);
-
+  const clearStorage = async () => {
+    try {
+      
+      dispatch(setSourceData({}))
+      setHasDownloadedContent(false);
+      console.log('All stored data cleared');
+    } catch (error) {
+      console.error('Failed to clear stored data', error);
+    }
+  };
   useEffect(() => {
     let socket;
 
@@ -97,6 +113,22 @@ function PriveteRoute() {
       });
 
       socket.onAny((eventName, ...args) => {
+        if(eventName==="rotate"){
+          console.log(eventName,typeof args[1].rotate)
+          dispatch(setRotate(args[1].rotate))
+        
+        }
+        if(eventName==="synchronize"){
+          console.log(eventName)
+          dispatch(setSynchronize(args))
+        }
+        if (eventName === 'device-status') {
+          const screenId = args[1];
+          if (screenId.status === "deleting") {
+            console.log('Device status is deleting, clearing storage...');
+             clearStorage();
+          }
+        }
         if (eventName === "device") {
           if (JSON.stringify(args) !== JSON.stringify(data.source)) {
             dispatch(setSourceData(args));
@@ -142,26 +174,32 @@ function PriveteRoute() {
   if (isLoading) {
     return (
       <View style={styles.container}>
-      <ActivityIndicator size="large" color="#1e29f3" />
-      <Text style={styles.loadingText}>İçerikler kontrol ediliyor...</Text>
-    </View>
+        <ActivityIndicator size="large" color="#1e29f3" />
+        <Text style={styles.loadingText}>İçerikler kontrol ediliyor...</Text>
+      </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {hasDownloadedContent || (message === 'Used Serial Number' && data?.source[0]?.source) ? <Player /> : <Device />}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    width: "100%",
-    flex: 1,
+   
+    flex:1,
+   
+     
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'black',
+    backgroundColor: 'blue',
+
+   
+    
+   
   },
   loadingText: {
     color: 'white',
